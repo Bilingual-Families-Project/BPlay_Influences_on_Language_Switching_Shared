@@ -1,0 +1,823 @@
+---
+title: "BPlay_Shared_Code"
+author: "Jessica Kosie"
+date: "2026-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse) #data munging and plotting
+library(lme4) #running mixed-effects models
+library(lmerTest) #significance for mixed effects models
+library(emmeans) #pairwise comparisons
+library(patchwork) #arranging plots
+```
+
+## This R Markdown document contains all analyses reported in the paper: "Social and Community Influences on Language Switching in Bilingual Toddlers’ Everyday Input"
+
+```{r load data files}
+
+# speaker_data contains information about all speakers present and the number of seconds they spoke English or NonEnglish (i.e., either Spanish or French, depending on the community)
+speaker_data <- read_csv("data/speaker_data.csv")
+
+# questionnaire data contains information from the demographics questionnaire that families completed
+questionnaire_data <- read_csv("data/questionnaire_data.csv")
+
+# session dates data contains information about the amount of delay between sessions
+session_dates <- read_csv("data/session_dates.csv")
+
+# switches data contains information about how caregivers switched between languages (summed across caregivers)
+switches_data <- read_csv("data/switches_data.csv") %>% 
+  mutate(community = as.factor(community), # turn community and session into factors
+         session = as.factor(session))
+  
+#set contrasts for factors of interest
+contrasts(switches_data$community) <- c(-0.5, .5)
+contrasts(switches_data$session) <- c(-0.5, .5)
+
+# switches data for session b, within speaker, by caregiver
+within_b_switches_by_cg <- read_csv("data/within_switches_session_b.csv") %>% 
+  mutate(community = as.factor(community)) # turn community into a factor
+        
+
+```
+
+## Participant Information
+
+```{r participant-info}
+
+# participant age
+questionnaire_data %>% 
+  group_by(community) %>% 
+  summarise(avg_age = mean(participant_age, na.rm = TRUE),
+            sd_age = sd(participant_age, na.rm = TRUE),
+            min_age = min(participant_age, na.rm = TRUE),
+            max_age = max(participant_age, na.rm = TRUE))
+
+# participant gender (note: 'both' refers to a set of M/F twins)
+questionnaire_data %>% 
+  group_by(community, child_gender) %>% 
+  summarise(n = n())
+
+# maternal education
+questionnaire_data %>% 
+  group_by(community, maternal_education) %>% 
+  summarise(n = n())
+
+# race/ethnicity by race
+questionnaire_data %>% 
+  group_by(child_race) %>% 
+  summarise(n = n())
+
+# race/ethnicity by race and community
+questionnaire_data %>% 
+  group_by(community, child_race) %>% 
+  summarise(n = n())
+
+```
+
+## Language Exposure
+
+```{r language-exposure}
+
+# summary amount of current exposure to each language
+questionnaire_data %>% 
+  group_by(community) %>%
+  summarise(avg_prop_english_current = mean(day_prop_english, na.rm = TRUE),
+            sd_prop_english_current = sd(day_prop_english, na.rm = TRUE),
+            min_prop_english_current = min(day_prop_english, na.rm = TRUE),
+            max_prop_english_current = max(day_prop_english, na.rm = TRUE),
+            avg_prop_non_english_current = mean(day_prop_non_english, na.rm = TRUE),
+            sd_prop_non_english_current = sd(day_prop_non_english, na.rm = TRUE),
+            min_prop_non_english_current = min(day_prop_non_english, na.rm = TRUE),
+            max_prop_non_english_current = max(day_prop_non_english, na.rm = TRUE),
+            avg_prop_other_current = mean(day_prop_other, na.rm = TRUE),
+            sd_prop_other_current = sd(day_prop_other, na.rm = TRUE),
+            min_prop_other_current = min(day_prop_other, na.rm = TRUE),
+            max_prop_other_current = max(day_prop_other, na.rm = TRUE)) %>% 
+  pivot_longer(-community) %>% 
+  pivot_wider(names_from = community, values_from = value)
+
+# summary amount of lifetime exposure to each language
+questionnaire_data %>% 
+  group_by(community) %>%
+  summarise(avg_prop_english_life = mean(life_prop_english, na.rm = TRUE),
+            sd_prop_english_life = sd(life_prop_english, na.rm = TRUE),
+            min_prop_english_life = min(life_prop_english, na.rm = TRUE),
+            max_prop_english_life = max(life_prop_english, na.rm = TRUE),
+            avg_prop_non_english_life = mean(life_prop_non_english, na.rm = TRUE),
+            sd_prop_non_english_life = sd(life_prop_non_english, na.rm = TRUE),
+            min_prop_non_english_life = min(life_prop_non_english, na.rm = TRUE),
+            max_prop_non_english_life = max(life_prop_non_english, na.rm = TRUE),
+            avg_prop_other_life = mean(life_prop_other, na.rm = TRUE),
+            sd_prop_other_life = sd(life_prop_other, na.rm = TRUE),
+            min_prop_other_life = min(life_prop_other, na.rm = TRUE),
+            max_prop_other_life = max(life_prop_other, na.rm = TRUE)) %>% 
+  pivot_longer(-community) %>% 
+  pivot_wider(names_from = community, values_from = value)
+  
+  
+# create a column that indicates which language is dominant (or if languages are equal)
+questionnaire_data <- questionnaire_data %>% 
+  mutate(language_dominance_current = case_when(day_prop_english > day_prop_non_english ~ "english",
+                       day_prop_english < day_prop_non_english ~ "non_english", 
+                       day_prop_english == day_prop_non_english ~ "equal"),
+         language_dominance_lifetime = case_when(life_prop_english > life_prop_non_english ~ "english",
+                       life_prop_english < life_prop_non_english ~ "non_english", 
+                       life_prop_english == life_prop_non_english ~ "equal"))
+
+# summary for current exposure
+questionnaire_data %>% 
+  group_by(community, language_dominance_current) %>% 
+  summarise(n = n())
+
+# model comparing current exposure across communities
+current_mod <- lm(day_prop_english ~ community, data = questionnaire_data)
+summary(current_mod)
+
+# summary for lifetime exposure
+questionnaire_data %>% 
+  group_by(community, language_dominance_lifetime) %>% 
+  summarise(n = n())
+
+# model comparing lifetime exposure across communities
+lifetime_mod <- lm(life_prop_english ~ community, data = questionnaire_data)
+summary(lifetime_mod)
+
+# primary caregiver age of acquisition
+questionnaire_data %>% 
+  group_by(community) %>% 
+  summarise(avg_age_english = mean(cg1_age_english, na.rm = TRUE),
+            sd_age_english = sd(cg1_age_english, na.rm = TRUE),
+            min_age_english = min(cg1_age_english, na.rm = TRUE),
+            max_age_english = max(cg1_age_english, na.rm = TRUE),
+            avg_age_non_english = mean(cg1_age_non_english, na.rm = TRUE),
+            sd_age_non_english = sd(cg1_age_non_english, na.rm = TRUE),
+            min_age_non_english = min(cg1_age_non_english, na.rm = TRUE),
+            max_age_non_english = max(cg1_age_non_english, na.rm = TRUE)) %>% 
+  pivot_longer(-community) %>% 
+  pivot_wider(names_from = community, values_from = value)
+
+# primary caregiver proficiency
+questionnaire_data %>% 
+  group_by(community) %>% 
+  summarise(avg_english_proficiency = mean(cg1_english_proficiency, na.rm = TRUE),
+            sd_english_proficiency = sd(cg1_english_proficiency, na.rm = TRUE),
+            min_english_proficiency = min(cg1_english_proficiency, na.rm = TRUE),
+            max_english_proficiency = max(cg1_english_proficiency, na.rm = TRUE),
+            avg_non_english_proficiency = mean(cg1_non_english_proficiency, na.rm = TRUE),
+            sd_non_english_proficiency = sd(cg1_non_english_proficiency, na.rm = TRUE),
+            min_non_english_proficiency = min(cg1_non_english_proficiency, na.rm = TRUE),
+            max_non_english_proficiency = max(cg1_non_english_proficiency, na.rm = TRUE)) %>% 
+  pivot_longer(-community) %>% 
+  pivot_wider(names_from = community, values_from = value)
+
+```
+
+## Session Information
+
+```{r session-info}
+
+# number of days between sessions
+session_dates %>% 
+  summarise(avg_days = mean(days_apart, na.rm = TRUE),
+            sd_days = sd(days_apart, na.rm = TRUE),
+            min_days = min(days_apart, na.rm = TRUE),
+            max_days = max(days_apart, na.rm = TRUE))
+
+# session A speaker identities
+speaker_data %>% 
+  filter(session == "SessionA") %>% 
+  select(subid, community, relation_to_child) %>% 
+  distinct() %>% 
+  group_by(community, relation_to_child) %>%
+  summarise(n = n())
+
+# session B speaker identities
+speaker_data %>% 
+  filter(session == "SessionB") %>% 
+  select(subid, community, relation_to_child) %>% 
+  distinct() %>% 
+  group_by(community, relation_to_child) %>%
+  summarise(n = n())
+
+# number of speakers
+num_speakers <- speaker_data %>% 
+  select(subid, community, session, relation_to_child) %>% 
+  distinct() %>% 
+  group_by(subid, community, session) %>% 
+  summarise(n = n())
+
+session_b_speakers <- num_speakers %>% 
+  ungroup() %>% 
+  filter(session == "SessionB")
+
+# average number of speakers
+session_b_speakers %>% 
+  summarise(avg_speakers = mean(n, na.rm = TRUE),
+            sd_speakers = sd(n, na.rm = TRUE),
+            min_speakers = min(n, na.rm = TRUE),
+            max_speakers = max(n, na.rm = TRUE))
+
+# average number of speakers by community
+session_b_speakers %>% 
+  group_by(community) %>% 
+  summarise(avg_speakers = mean(n, na.rm = TRUE),
+            sd_speakers = sd(n, na.rm = TRUE),
+            min_speakers = min(n, na.rm = TRUE),
+            max_speakers = max(n, na.rm = TRUE))
+
+# model comparing number of speakers at Session B across community
+num_speakers_mod <- lm(n ~ community, data = session_b_speakers)
+summary(num_speakers_mod)
+
+# who was present at second session
+primary_caregiver <- speaker_data %>% 
+  filter(session == "SessionA") %>% 
+  select(subid, community, relation_to_child) %>% 
+  distinct() %>% 
+  mutate(primary_caregiver = "yes")
+
+# identity of additional Session B speakers for Spanish-English sample
+speaker_data %>% 
+  left_join(primary_caregiver) %>% 
+  filter(is.na(primary_caregiver), community == "SpanishEnglish") %>% 
+  select(subid, session, community, relation_to_child) %>% 
+  distinct() %>% 
+  mutate(relation_to_child = case_when(relation_to_child == "mother" ~ "second_parent",
+                                       relation_to_child == "father" ~ "second_parent",
+                                       relation_to_child == "sister" ~ "sibling",
+                                       relation_to_child == "brother" ~ "sibling",
+                                       relation_to_child == "grandmother" ~ "grandparent",
+                                       relation_to_child == "grandfather" ~ "grandparent",
+                                       TRUE ~ relation_to_child)) %>% 
+  group_by(session, community, relation_to_child) %>% 
+  summarise(n = n())
+
+# identity of additional Session B speakers for French-English sample
+speaker_data %>% 
+  left_join(primary_caregiver) %>% 
+  filter(is.na(primary_caregiver), community == "FrenchEnglish") %>% 
+  select(subid, session, community, relation_to_child) %>% 
+  distinct() %>% 
+  mutate(relation_to_child = case_when(relation_to_child == "mother" ~ "second_parent",
+                                       relation_to_child == "father" ~ "second_parent",
+                                       relation_to_child == "sister" ~ "sibling",
+                                       relation_to_child == "brother" ~ "sibling",
+                                       relation_to_child == "grandmother" ~ "grandparent",
+                                       relation_to_child == "grandfather" ~ "grandparent",
+                                       TRUE ~ relation_to_child)) %>% 
+  group_by(session, community, relation_to_child) %>% 
+  summarise(n = n())
+  
+
+```
+
+## How much speech do bilingual toddlers hear?
+
+```{r amt speech}
+
+amt_speech <- speaker_data %>% 
+  group_by(subid, community, session) %>% 
+  summarise(total_speech = sum(speaking_seconds, na.rm = TRUE))
+
+amt_speech %>% 
+  group_by(session) %>% 
+  summarise(avg_speech = mean(total_speech, na.rm = TRUE),
+            sd_speech = sd(total_speech, na.rm = TRUE),
+            min_speech = min(total_speech, na.rm = TRUE),
+            max_speech = max(total_speech, na.rm = TRUE))
+
+amt_speech %>% 
+  group_by(community, session) %>% 
+  summarise(avg_speech = mean(total_speech, na.rm = TRUE),
+            sd_speech = sd(total_speech, na.rm = TRUE),
+            min_speech = min(total_speech, na.rm = TRUE),
+            max_speech = max(total_speech, na.rm = TRUE))
+
+amt_mod <- lmer(total_speech ~ community * session + (1|subid), data = amt_speech)
+summary(amt_mod)
+
+```
+
+## How much language switching do bilingual toddlers encounter?
+
+```{r amt switching}
+
+# switches per minute averaged across days and communities
+switches_data %>% 
+  summarise(avg_total_spm = mean(total_spm, na.rm = TRUE),
+            sd_total_spm = sd(total_spm, na.rm = TRUE),
+            min_total_spm = min(total_spm, na.rm = TRUE),
+            max_total_spm = max(total_spm, na.rm = TRUE))
+
+total_spm_mod <- lmer(total_spm ~ community * session + (1|subid), data = switches_data)
+summary(total_spm_mod)
+
+# switches per minute averaged by session
+switches_data %>% 
+  group_by(session) %>% 
+  summarise(avg_total_spm = mean(total_spm, na.rm = TRUE),
+            sd_total_spm = sd(total_spm, na.rm = TRUE),
+            min_total_spm = min(total_spm, na.rm = TRUE),
+            max_total_spm = max(total_spm, na.rm = TRUE))
+
+# Figure 1:  Number of switches per minute at Session A (with one speaker present) and Session B (with multiple speakers present) across the Spanish-English (left) and French-English (right) communities. 
+
+#plot effects
+figure_1 <- switches_data %>% 
+  mutate(community = factor(community, levels = c("SpanishEnglish", "FrenchEnglish"), labels = c("Spanish-English", "French-English")),
+         session = factor(session, levels = c("SessionA", "SessionB"), labels = c("Session A:\n One Speaker\nPresent", "Session B:\n Multiple Speakers\nPresent")))
+
+figure_1 %>% 
+  ggplot(aes(x = session, y = total_spm, fill = community)) +
+  geom_boxplot(outlier.shape = NA) +
+  theme_bw() +
+  theme(legend.position = "none", axis.title.x=element_blank(), plot.title = element_text(hjust = 0.5, size = 22), axis.text=element_text(size=22), axis.title.y = element_text(size = 22), strip.text = element_text(size = 22))  +
+  labs(x = "Session", y = "Switches per Minute") + 
+  scale_fill_manual(values = c("#F0A35E", "#70AE98"), name = "Site") +
+  geom_point(data = figure_1, aes(x = session, y = total_spm), position=position_jitter(width =.15), size = 4, shape = 1) +
+  facet_wrap(~community)
+
+ggsave("plots/figure_1.png", height = 8, width = 12)
+
+
+```
+
+## How often do toddlers hear language switching within-speaker vs. across-speakers?
+
+```{r within vs across}
+
+# put data into long format
+switches_long <- switches_data %>% 
+  select(-total_spm) %>% 
+  pivot_longer(within_spm:between_spm, names_to = "switch_type", values_to = "spm") %>% 
+  mutate(switch_type = str_remove(switch_type, "_spm$")) %>% 
+  unite("switch_category", session, switch_type, remove = FALSE) %>% 
+  filter(switch_category != "SessionA_between") %>%  # these are all 0s because they're not possible
+  droplevels() %>% 
+  mutate(switch_category = as.factor(switch_category))
+
+# set contrasts for switch_category
+contr_a <- c(.25, -.5, .25)
+contr_b <- c(-.25, -.25, .5)
+contrasts(switches_long$switch_category) <- cbind(contr_a, contr_b)
+
+type_spm_mod <- lmer(spm ~ switch_category * community + (1|subid), data = switches_long)
+anova(type_spm_mod)
+
+## pairwise comparisons by switch_category
+
+# Estimated marginal means for switch_category
+emm_sw <- emmeans(type_spm_mod, ~ switch_category)
+
+# Pairwise comparisons with correction
+summary(pairs(emm_sw), adjust = "bonf")
+
+## pairwise comparisons by switch_category and community
+
+# get estimated marginal means
+emm_sw  <- emmeans(type_spm_mod, ~ switch_category | community)
+emm_com <- emmeans(type_spm_mod, ~ community | switch_category)
+
+# get the contrasts without adjusting yet
+sw_contrasts  <- pairs(emm_sw,  adjust = "none")
+com_contrasts <- pairs(emm_com, adjust = "none")
+
+# combine all contrasts into one object
+all_contrasts <- rbind(sw_contrasts, com_contrasts)
+
+# apply one multiple-comparisons correction across all tests together
+summary(all_contrasts, adjust = "bonf")
+
+# Figure 2: Number of within-speaker switches per minute at Session A (with one speaker present), within-speaker switches per minute at Session B (with multiple speakers present), and across-speaker switches per minute at Session B across the Spanish-English (left) and French-English (right) communities.
+
+figure_2 <- switches_long %>% 
+    mutate(sess_and_type_labels = factor(switch_category, levels = c("SessionA_within", "SessionB_within", "SessionB_between"), labels = c("Session A:\nWithin-Speaker", "Session B:\nWithin-Speaker", "Session B:\nAcross-Speaker")),
+           community = factor(community, levels = c("SpanishEnglish", "FrenchEnglish"), labels = c("Spanish-English", "French-English")),
+           session = factor(session, levels = c("SessionA", "SessionB"), labels = c("Session A", "Session B")))
+
+figure_2 %>% 
+  mutate(community = factor(community, levels = c("Spanish-English", "French-English"))) %>% 
+  ggplot(aes(x = sess_and_type_labels, y = spm, fill = community, alpha = sess_and_type_labels)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_vline(xintercept = 1.5, linetype = "dashed", linewidth = 1) +
+  scale_fill_manual(values = c("#F0A35E", "#70AE98")) +
+  scale_alpha_manual(values = c(1, 1, 0.5)) +
+  theme_bw() +
+  theme(legend.position = "none", axis.title.x=element_blank(), plot.title = element_text(hjust = 0.5, size = 24), axis.text=element_text(size=24), axis.title.y = element_text(size = 24), strip.text = element_text(size = 24))  +
+  labs(x = "Community", y = "Switches per Minute", color = "Community", alpha = "Switch Type") + 
+  geom_point(data = figure_2, aes(x = sess_and_type_labels, y = spm), position=position_jitter(width =.15), size = 4, shape = 1) +
+  ylim(c(-1, 17)) +
+  facet_wrap(~community)
+
+ggsave("plots/figure_2.png", height = 12, width = 18)
+
+
+```
+
+## How stable or variable are toddlers’ experiences with language switching?
+
+```{r stable or variable}
+
+# switches per minute and per hour across the three switch categories
+switches_long %>% 
+  group_by(switch_category) %>% 
+  summarise(min_spm = min(spm, na.rm =TRUE),
+            max_spm = max(spm, na.rm = TRUE),
+            min_sph = min_spm * 60,
+            max_sph = max_spm * 60)
+
+# Figure 3. Number of language switches heard by individual bilingual infants across sessions and language communities. Bars show switches per minute for each infant in Session A: One Speaker Present (top row) and Session B: Multiple Speakers Present (bottom row) in Spanish–English (left column) and French–English (right column) communities. In Session B, bars are partitioned by switch type, with dark shading indicating within-speaker switches and light shading indicating across-speaker switches. Participants are ordered by switching frequency in Session A within each community. 
+
+#get order for Session A (to put families in order of Session A switches)
+sA_ordered <- switches_long %>% 
+  filter(session == "SessionA") %>% 
+  arrange(spm) %>% 
+  mutate(order_num = row_number()) %>% 
+  select(subid, order_num)
+
+spm <- switches_long %>% 
+  filter(session == "SessionA") %>% 
+  select(subid, spm)
+
+unique_subs <- switches_long %>% 
+  filter(session == "SessionA") %>% 
+  left_join(spm) %>%
+  group_by(community) %>% 
+  arrange(desc(spm), .by_group = TRUE) %>% 
+  ungroup() %>% 
+  mutate(sub_num = c(12:27, 1:11)) %>% 
+  select(subid, sub_num) %>% 
+  arrange(sub_num)
+
+switches_long %>% 
+  left_join(sA_ordered) %>% 
+  left_join(unique_subs) %>% 
+  mutate(switch_type = case_when(switch_type == "between" ~ "Across Speaker",
+                                 switch_type == "within" ~ "Within Speaker"),
+         session = case_when(session == "SessionA" ~ "Session A:\nOne Speaker Present",
+                             session == "SessionB" ~ "Session B:\nMultiple Speakers Present"),
+         community = case_when(community == "FrenchEnglish" ~ "French-English",
+                               community == "SpanishEnglish" ~ "Spanish-English"),
+         community = factor(community, levels = c("Spanish-English", "French-English"))) %>% 
+  
+  ggplot(aes(x= reorder(sub_num, -order_num), y=spm, fill=community, alpha=switch_type)) +
+    geom_bar(stat="identity") +
+    ylim(0, 15) +
+    theme_linedraw() +
+   theme(axis.text=element_text(size=10), axis.title.y = element_text(size = 16), axis.title.x = element_text(size = 16), strip.text = element_text(size = 16), legend.text = element_text(size = 16), legend.title = element_text(size = 16))  +
+    scale_fill_manual(values = c("#F0A35E", "#70AE98"), name = "Community") +
+    scale_alpha_manual(values = c(0.5, 1), name = "Switch Type") +
+    labs(y = "Switches per Minute\n",  x = "\nParticipant Number") +
+    guides(fill = guide_legend(order = 1), alpha = guide_legend(order = 2)) +
+    facet_wrap(~session + community, scales = "free_x")
+
+ggsave("plots/figure_3.png", width = 10, height = 8)
+
+# Is the amount of total switching toddlers encounter across days correlated?
+
+total_switching <- switches_data %>% 
+  select(subid, session, community, total_spm) %>% 
+  pivot_wider(names_from = session, values_from = total_spm)
+
+cor.test(total_switching$SessionA, total_switching$SessionB)
+
+# above analysis without outlier (for P_07, book reading on Day 1 led to excessive switching)
+total_switching_no_outlier <- total_switching %>% 
+  filter(subid != "P_07")
+
+cor.test(total_switching_no_outlier$SessionA, total_switching_no_outlier$SessionB)
+
+# above analysis for French-English community only
+total_switching_fe <- total_switching %>% 
+  filter(community == "FrenchEnglish")
+
+cor.test(total_switching_fe$SessionA, total_switching_fe$SessionB)
+
+# Is the amount of within-speaker switching toddlers encounter across days correlated?
+
+within_switching <- switches_data %>% 
+  select(subid, session, community, within_spm) %>% 
+  pivot_wider(names_from = session, values_from = within_spm)
+
+cor.test(within_switching$SessionA, within_switching$SessionB)
+
+# above analysis without outlier
+within_switching_no_outlier <- within_switching %>% 
+  filter(subid != "P_07")
+
+cor.test(within_switching_no_outlier$SessionA, within_switching_no_outlier$SessionB)
+
+# above analysis for French-English community only
+within_switching_fe <- within_switching %>% 
+  filter(community == "FrenchEnglish")
+
+cor.test(within_switching_fe$SessionA, within_switching_fe$SessionB)
+
+# Is within-speaker switching in Session A correlated with across-speaker switching in Session B?
+
+within_a <- switches_data %>% 
+  filter(session == "SessionA") %>% 
+  select(subid, community, within_spm)
+
+across_b <- switches_data %>% 
+  filter(session == "SessionB") %>% 
+  select(subid, community, between_spm)
+
+cor.test(within_a$within_spm, across_b$between_spm)
+
+# Is within-speaker switching in Session B correlated with across-speaker switching in Session B?
+
+within_b <- switches_data %>% 
+  filter(session == "SessionB") %>% 
+  select(subid, within_spm)
+
+cor.test(within_b$within_spm, across_b$between_spm)
+
+#Figure 4. Plots show relations between toddlers’ experience of switching (switches per minute) comparing within-speaker switching in Session A against within-speaker switching in Session B (left). Within-speaker switching in Session A with across-speaker switching in Session B (middle) and within-speaker switching against across-speaker switching, both within Session B (right). Separate lines indicate the Spanish-English (orange) and French-English (green) communities and indicate linear model fits with shaded areas representing +/- 1 SE.
+
+wA_wB <- within_switching %>% 
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = SessionA, y = SessionB)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 13),
+    breaks = seq(0, 12, by = 2),
+    expand = c(0, 0)
+  )  +
+  labs(
+    x = "\nSession A: Within Speaker Switching",
+    y = "Session B: Within Speaker Switching"
+  )
+
+wA_aB <- within_a %>%
+  left_join(across_b) %>% 
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = within_spm, y = between_spm)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 13),
+    breaks = seq(0, 12, by = 2),
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "\nSession A: Within Speaker Switching",
+    y = "Session B: Across Speaker Switching"
+  )
+
+wB_aB <- within_b %>% 
+  left_join(across_b)  %>% 
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = within_spm, y = between_spm)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24)
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 13),
+    breaks = seq(0, 12, by = 2),
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "\nSession B: Within Speaker Switching",
+    y = "Session B: Across Speaker Switching"
+  )
+
+wA_wB + wA_aB + wB_aB
+
+ggsave("plots/figure_4.png", height = 8, width = 24)
+
+# amount of primary caregiver input
+
+speaker_data <- speaker_data %>% 
+  left_join(primary_caregiver) %>% 
+  mutate(primary_caregiver = case_when(is.na(primary_caregiver) ~ "no",
+                                       TRUE ~ primary_caregiver))
+
+speaker_data %>% 
+  group_by(community, session, primary_caregiver) %>% 
+  summarise(speaking_seconds_total = sum(speaking_seconds))
+
+speaker_data %>% 
+  group_by(community, session) %>% 
+  summarise(total_speech = sum(speaking_seconds))
+
+# this section needs to be cleaned up!
+
+# french-english, session B prop speech primary cg
+4758/9629
+
+# total, session B prop speech primary cg
+(4758+2592) / (9629+5862)
+
+# get speaker identity for primary caregiver
+primary_caregiver <- primary_caregiver %>% 
+  mutate(speaker = case_when(relation_to_child == "mother" ~ "FA1",
+                             relation_to_child == "father" ~ "MA1",
+                             TRUE ~ NA_character_))
+
+# number of switches produced by primary caregiver across sessions
+within_b_switches_primary_cg <- within_b_switches_by_cg %>% 
+  left_join(primary_caregiver) %>% 
+  filter(primary_caregiver == "yes") %>% 
+  mutate(session = "SessionB") %>% 
+  select(subid, community, within_spm, session)
+
+within_a <- within_a %>% 
+  mutate(session = "SessionA")
+
+primary_cg_switches <- rbind(within_b_switches_primary_cg, within_a) %>% 
+  pivot_wider(names_from = session, values_from = within_spm)
+
+cor.test(primary_cg_switches$SessionA, primary_cg_switches$SessionB)
+  
+primary_cg_switches_no_outlier <- primary_cg_switches %>% 
+  filter(subid != "P_07")
+
+cor.test(primary_cg_switches_no_outlier$SessionA, primary_cg_switches_no_outlier$SessionB)
+
+primary_cg_switches_fe <- primary_cg_switches %>% 
+  filter(community == "FrenchEnglish")
+
+cor.test(primary_cg_switches_fe$SessionA, primary_cg_switches_fe$SessionB)
+
+# number of within switches produced by other caregivers at session b
+within_b_switches_other_cg <- within_b_switches_by_cg %>% 
+  left_join(primary_caregiver) %>% 
+  filter(primary_caregiver == "no") %>% 
+  mutate(session = "SessionB") %>% 
+  group_by(subid, community) %>% 
+  summarise(SessionB_Other = sum(within_spm))
+
+all_switches <- left_join(primary_cg_switches, within_b_switches_other_cg)
+
+# within for other household members at B vs. primary caregiver at A
+
+cor.test(all_switches$SessionB_Other, all_switches$SessionA)
+
+# above analysis without outlier
+all_switches_no_outlier <- all_switches %>% 
+  filter(subid != "P_07")
+
+cor.test(all_switches_no_outlier$SessionB_Other, all_switches_no_outlier$SessionA)
+
+# above analysis for FrenchEnglish
+all_switches_fe <- all_switches %>% 
+  filter(community == "FrenchEnglish")
+
+cor.test(all_switches_fe$SessionB_Other, all_switches_fe$SessionA)
+
+# within for other household members at B vs. primary caregiver at B
+
+cor.test(all_switches$SessionB_Other, all_switches$SessionB)
+
+cor.test(all_switches_no_outlier$SessionB_Other, all_switches_no_outlier$SessionB)
+
+cor.test(all_switches_fe$SessionB_Other, all_switches_fe$SessionB)
+
+# Figure 5. Plots show relations between primary caregivers’ switching (within-speaker switches per minute) in Session A and primary caregivers’ switching in Session B (left);  primary caregivers’ switching in Session A and switching averaged across all other speakers in Session B (middle); and primary caregivers’ within-speaker switching in Session B and switching averaged across all other speakers in Session B (middle). Separate lines indicate the Spanish-English (orange) and French-English (green) communities and indicate linear model fits with shaded areas representing +/- 1 SE.
+
+pA_pB <- all_switches %>%
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = SessionA, y = SessionB)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 8),
+    breaks = seq(0, 8, by = 2),
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "\nSession A: Primary Caregiver Switching",
+    y = "Session B: Primary Caregiver Switching"
+  )
+
+
+pA_oB <- all_switches%>%
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = SessionA, y = SessionB_Other)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 8),
+    breaks = seq(0, 8, by = 2),
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "\nSession A: Primary Caregiver Switching",
+    y = "Session B: Other Speakers Switching"
+  )
+
+
+pB_oB <- all_switches %>%
+  filter(subid != "P_07") %>% 
+  ggplot(aes(x = SessionB, y = SessionB_Other)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "black") +
+  theme_linedraw() +
+  theme(
+    axis.text.x = element_text(angle = 90),
+    plot.title = element_text(size = 24),
+    axis.text = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    axis.title.x = element_text(size = 24),
+    legend.text = element_text(size = 22),
+    legend.title = element_text(size = 24)
+  ) +
+  scale_x_continuous(
+    limits = c(0, 6),
+    breaks = seq(0, 6, by = 2)
+  ) +
+  scale_y_continuous(
+    limits = c(0, 8),
+    breaks = seq(0, 8, by = 2),
+    expand = c(0, 0)
+  )  +
+  labs(
+    x = "\nSession B: Primary Caregiver Switching",
+    y = "Session B: Other Speakers Switching",
+    color = "Site"
+  )
+
+pA_pB + pA_oB + pB_oB
+
+ggsave("plots/figure_5.png", height = 8, width = 22)
+
+```
+
+
